@@ -1,6 +1,7 @@
 #include "compositor.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,6 +9,94 @@
 #include <unistd.h>
 
 #define MAX_DRM_DEVICES 16
+
+static int set_connector_crtc(int fd, drmModeAtomicReq *req,
+		uint32_t connector_id, int crtc_id) {
+	drmModeObjectProperties *props = drmModeObjectGetProperties(fd,
+			connector_id, DRM_MODE_OBJECT_CONNECTOR);
+	int32_t prop_id = -1;
+	for (uint32_t i = 0; i < props->count_props; i++) {
+		drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[i]);
+		bool match = strcmp(prop->name, "CRTC_ID") == 0;
+		prop_id = prop->prop_id;
+		drmModeFreeProperty(prop);
+
+		if (match) {
+			break;
+		} else {
+			prop_id = -1;
+		}
+	}
+	assert(prop_id != -1);
+
+	drmModeFreeObjectProperties(props);
+	return drmModeAtomicAddProperty(req, connector_id, prop_id, crtc_id);
+}
+
+static int set_crtc_property(int fd, drmModeAtomicReq *req, uint32_t crtc_id,
+				const char *name, uint64_t value) {
+	drmModeObjectProperties *props = drmModeObjectGetProperties(fd,
+			crtc_id, DRM_MODE_OBJECT_CRTC);
+	int32_t prop_id = -1;
+	for (uint32_t i = 0; i < props->count_props; i++) {
+		drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[i]);
+		bool match = strcmp(prop->name, name) == 0;
+		prop_id = prop->prop_id;
+		drmModeFreeProperty(prop);
+
+		if (match) {
+			break;
+		} else {
+			prop_id = -1;
+		}
+	}
+	assert(prop_id != -1);
+	drmModeFreeObjectProperties(props);
+
+	return drmModeAtomicAddProperty(req, crtc_id, prop_id, value);
+}
+
+static int set_plane_property(struct plane *plane, drmModeAtomicReq *req,
+		const char *name, uint64_t value) {
+	int prop_id = -1;
+	for (uint32_t i = 0; i < plane->props->count_props; i++) {
+		if (strcmp(plane->props_info[i]->name, name) == 0) {
+			prop_id = plane->props_info[i]->prop_id;
+			break;
+		}
+	}
+
+
+	if (prop_id < 0) {
+		printf("no plane property: %s\n", name);
+		return -EINVAL;
+	}
+
+	return drmModeAtomicAddProperty(req, plane->plane->plane_id, prop_id, value);
+}
+
+static int add_plane_to_req(struct plane *plane, drmModeAtomicReq *req,
+		uint32_t crtc_id, drmModeModeInfo *mode) {
+#define OK(val) if (val == -1) return -1;
+	OK(set_plane_property(plane, req, "FB_ID", plane->fb));
+	OK(set_plane_property(plane, req, "CRTC_ID", crtc_id));
+	OK(set_plane_property(plane, req, "SRC_X", 0));
+	OK(set_plane_property(plane, req, "SRC_Y", 0));
+	OK(set_plane_property(plane, req, "SRC_W", mode->hdisplay << 16));
+	OK(set_plane_property(plane, req, "SRC_H", mode->vdisplay << 16));
+	OK(set_plane_property(plane, req, "CRTC_X", 0));
+	OK(set_plane_property(plane, req, "CRTC_Y", 0));
+	OK(set_plane_property(plane, req, "CRTC_W", mode->hdisplay));
+	OK(set_plane_property(plane, req, "CRTC_H", mode->vdisplay));
+	/* assume the user never sets the zpos for the 0-th plane,
+	 * with is further assumed to be the primary plane */
+	if (plane->zpos != 0) {
+		OK(set_plane_property(plane, req, "zpos", plane->zpos));
+	}
+#undef OK
+	return 0;
+}
+
 
 static int find_drm_device() {
 	drmDevicePtr devices[MAX_DRM_DEVICES];
@@ -98,7 +187,7 @@ struct compositor *compositor_create() {
 	/* find the preferred mode */
 	ini->mode = NULL;
 	for (int i = 0; i < connector->count_modes; i++) {
-		if (connector->modes[i].flags & DRM_MODE_TYPE_PREFERRED) {
+		if (connector->modes[i].flags & (DRM_MODE_TYPE_PREFERRED | DRM_MODE_TYPE_DEFAULT)) {
 			ini->mode = &connector->modes[i];
 			break;
 		}
@@ -138,4 +227,67 @@ struct compositor *compositor_create() {
 	printf("compositor: found %d planes\n", ini->nplanes);
 
 	return ini;
+}
+
+void compositor_draw(struct compositor *compositor, bool modeset) {
+	drmModeAtomicReq *req = drmModeAtomicAlloc();
+
+	if (modeset) {
+		if (set_connector_crtc(compositor->fd, req, compositor->connector_id,
+					compositor->crtc_id) < 0) {
+			fprintf(stderr, "could not set connector crtc\n");
+			assert(0);
+		}
+
+		uint32_t mode_blob = -1;
+		if (drmModeCreatePropertyBlob(compositor->fd, compositor->mode,
+					sizeof(drmModeModeInfo), &mode_blob) != 0) {
+			fprintf(stderr, "could not set create blob for modeset\n");
+			assert(0);
+		}
+
+		if (set_crtc_property(compositor->fd, req, compositor->crtc_id,
+					"MODE_ID", mode_blob) < 0) {
+			fprintf(stderr, "could not set crtc mode property\n");
+			assert(0);
+		}
+
+		if (set_crtc_property(compositor->fd, req, compositor->crtc_id,
+					"ACTIVE", 1) < 0) {
+			fprintf(stderr, "could not activate crtc\n");
+			assert(0);
+		}
+	}
+
+	for (int i = 0; i < COMPOSITOR_MAX_PLANES; i++) {
+		if ((compositor->enabled_planes & (1 << i)) == 0) {
+			continue;
+		}
+
+		if (add_plane_to_req(&compositor->planes[i], req,
+				compositor->crtc_id, compositor->mode) < 0) {
+			fprintf(stderr, "could not add plane properties\n");
+			assert(0);
+		}
+	}
+
+	uint32_t flags = 0;
+	if (modeset) {
+		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
+	}
+
+	if (drmModeAtomicCommit(compositor->fd, req, flags, NULL) < 0) {
+		fprintf(stderr, "drmModeAtomicCommit failed\n");
+		assert(0);
+	}
+
+	drmModeAtomicFree(req);
+}
+
+void compositor_plane_enable(struct compositor *compositor, uint32_t idx) {
+	compositor->enabled_planes |= (1 << idx);
+}
+
+void compositor_plane_disable(struct compositor *compositor, uint32_t idx) {
+	compositor->enabled_planes &= ~(1 << idx);
 }
