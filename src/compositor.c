@@ -34,6 +34,43 @@ static int find_drm_device() {
 	return fd;
 }
 
+static void get_plane_info(int fd, drmModePlane *plane, struct plane *info) {
+	info->plane = plane;
+	info->props = drmModeObjectGetProperties(fd, plane->plane_id,
+			DRM_MODE_OBJECT_PLANE);
+	info->props_info =
+		calloc(info->props->count_props, sizeof(drmModePropertyRes));
+	for (uint32_t i = 0; i < info->props->count_props; i++) {
+		info->props_info[i] =
+			drmModeGetProperty(fd, info->props->props[i]);
+	}
+}
+
+static int get_planes_for_crtc(int fd, uint32_t crtc, uint32_t max_planes,
+		struct plane *planes) {
+	drmModePlaneRes *plane_resources = drmModeGetPlaneResources(fd);
+	assert(plane_resources != NULL);
+
+	uint32_t plane_cnt = 0;
+	for (uint32_t i = 0; i < plane_resources->count_planes; i++) {
+		if (plane_cnt >= max_planes) {
+			fprintf(stderr, "more hardware planes available than "
+					"supported (%d)... ignoring extras\n",
+					max_planes);
+			break;
+		}
+
+		drmModePlane *plane = drmModeGetPlane(fd, plane_resources->planes[i]);
+		if (plane->possible_crtcs & (1 << crtc)) {
+			get_plane_info(fd, plane, &planes[plane_cnt]);
+			plane_cnt++;
+		}
+	}
+
+	drmModeFreePlaneResources(plane_resources);
+	return plane_cnt;
+}
+
 struct compositor *compositor_create() {
 	struct compositor *ini = calloc(1, sizeof(struct compositor));
 
@@ -78,10 +115,27 @@ struct compositor *compositor_create() {
 	}
 	assert(encoder != NULL);
 
-	ini->crtc_id = encoder->crtc_id;
+	ini->crtc_id = 0;
+	for (int i = 0; i < resources->count_crtcs; i++) {
+		if (resources->crtcs[i] == encoder->crtc_id) {
+			ini->crtc_id = encoder->crtc_id;
+			ini->crtc_index = i;
+		}
+	}
 	assert(ini->crtc_id != 0);
 
 	drmModeFreeResources(resources);
+
+	int ret = 0;
+
+	ret = drmSetClientCap(ini->fd, DRM_CLIENT_CAP_ATOMIC, 1);
+	if (ret < 0) {
+		fprintf(stderr, "atomic modesetting is required\n");
+	}
+
+	ini->nplanes = get_planes_for_crtc(ini->fd, ini->crtc_index,
+			COMPOSITOR_MAX_PLANES, ini->planes);
+	printf("compositor: found %d planes\n", ini->nplanes);
 
 	return ini;
 }
