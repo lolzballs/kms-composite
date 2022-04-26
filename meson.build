@@ -26,6 +26,7 @@ drm = dependency('libdrm', include_type: 'system')
 sources = files(
 	'src/compositor.c',
 	'src/main.c',
+	'shared/dumb_fb.c',
 )
 
 executable('kms-composite',
