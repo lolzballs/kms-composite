@@ -23,13 +23,19 @@ add_project_arguments(cc.get_supported_arguments([
 
 drm = dependency('libdrm', include_type: 'system')
 
+include_dirs = include_directories('include')
+
+subdir('examples')
+
 sources = files(
 	'src/compositor.c',
 	'src/main.c',
 	'shared/dumb_fb.c',
 )
 
-executable('kms-composite',
+executable(
+	'kms-composite',
 	sources,
 	dependencies: [drm],
-	include_directories: 'include')
+	include_directories: include_dirs
+)
