@@ -40,7 +40,7 @@ int main(int argc, char *argv[]) {
 		assert(ret != -1);
 
 		for (int i = 0; i < opts.max_clients; i++) {
-			if (server.clients[i].connected) {
+			if (server.clients[i].fd != -1) {
 				uint32_t plane = opts.client_planes[i];
 				/* no fb received this frame */
 				if (server.clients[i].fb_id == (uint32_t) -1) {

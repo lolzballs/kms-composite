@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 struct protocol_client_state {
-	bool connected;
+	int fd;
 	uint32_t fb_id;
 };
 

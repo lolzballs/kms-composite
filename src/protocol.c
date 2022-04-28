@@ -75,7 +75,7 @@ static int handle_unknown_client(struct protocol_server *server, int fd) {
 		close(fd);
 		return -1;
 	}
-	if (server->clients[client_id].connected) {
+	if (server->clients[client_id].fd != -1) {
 		fprintf(stderr, "warning: ignoring client reported a client_id "
 				"which is already in use\n");
 		close(fd);
@@ -95,7 +95,7 @@ static int handle_unknown_client(struct protocol_server *server, int fd) {
 		exit(EXIT_SUCCESS);
 	}
 
-	server->clients[client_id].connected = true;
+	server->clients[client_id].fd = fd;
 	server->clients[client_id].fb_id = -1;
 	return 0;
 }
@@ -116,7 +116,7 @@ static int handle_client_message(struct protocol_server *server,
 		exit(EXIT_SUCCESS);
 	}
 
-	assert(server->clients[data->client_id].connected);
+	assert(server->clients[data->client_id].fd != -1);
 	server->clients[data->client_id].fb_id = fb_id;
 	return 0;
 }
@@ -171,6 +171,10 @@ int protocol_server_init(struct protocol_server *server,
 	server->epollfd = epollfd;
 	server->nclients = max_clients;
 	server->clients = calloc(max_clients, sizeof(struct protocol_client_state));
+	for (int i = 0; i < max_clients; i++) {
+		server->clients[i].fd = -1;
+		server->clients[i].fb_id = -1;
+	}
 
 	return 0;
 }
@@ -194,7 +198,7 @@ int protocol_server_poll(struct protocol_server *server) {
 				perror("close");
 			}
 
-			server->clients[data.client_id].connected = false;
+			server->clients[data.client_id].fd = -1;
 			server->clients[data.client_id].fb_id = -1;
 			continue;
 		}
