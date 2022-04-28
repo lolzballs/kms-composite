@@ -28,6 +28,28 @@ drm = dependency('libdrm', include_type: 'system')
 
 include_dirs = include_directories('include')
 
+mpc_client_lib = library(
+	'mpc-client',
+	files('libmpc-client.c'),
+	version: meson.project_version(),
+	include_directories: include_dirs,
+	install: true
+)
+mpc_client = declare_dependency(
+	link_with: mpc_client_lib,
+	include_directories: include_dirs,
+)
+install_headers('include/libmpc-client.h')
+
+pkgconfig = import('pkgconfig')
+pkgconfig.generate(
+	mpc_client_lib,
+	version: meson.project_version(),
+	filebase: 'mpc-client',
+	name: 'mpc-client',
+	description: 'client interface to communicate with mpc (multi-plane compositor)'
+)
+
 subdir('examples')
 
 sources = files(
@@ -43,3 +65,4 @@ executable(
 	dependencies: [drm],
 	include_directories: include_dirs,
 )
+
