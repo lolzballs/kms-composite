@@ -57,5 +57,6 @@ int main(int argc, char *argv[]) {
 		}
 
 		compositor_draw(compositor, false);
+		protocol_server_broadcast(&server);
 	}
 }

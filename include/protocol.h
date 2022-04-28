@@ -20,5 +20,6 @@ struct protocol_server {
 int protocol_server_init(struct protocol_server *server,
 		const char *socket_path, int max_clients);
 int protocol_server_poll(struct protocol_server *server);
+int protocol_server_broadcast(struct protocol_server *server);
 
 #endif

@@ -223,3 +223,11 @@ int protocol_server_poll(struct protocol_server *server) {
 
 	return 0;
 }
+
+int protocol_server_broadcast(struct protocol_server *server) {
+	uint32_t dummy = 0xCDCDCDCD;
+	for (int i = 0; i < server->nclients; i++) {
+		write(server->clients[i].fd, &dummy, sizeof(uint32_t));
+	}
+	return 0;
+}
