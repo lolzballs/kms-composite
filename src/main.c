@@ -1,52 +1,60 @@
 #include <assert.h>
 #include <drm_fourcc.h>
+#include <fcntl.h>
 #include <stdio.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "compositor.h"
+#include "protocol.h"
 #include "shared/dumb_fb.h"
 
+
+struct mpc_options {
+	const char *socket_path;
+	int max_clients;
+
+	int *client_planes;
+};
+
 int main(int argc, char *argv[]) {
+	int ret;
+
+	struct protocol_server server;
+	struct mpc_options opts = {
+		.socket_path = "/home/pi/mpc.sock",
+		.max_clients = 2,
+		.client_planes = (int[]) { 0, 1 },
+	};
+	ret = protocol_server_init(&server, opts.socket_path, opts.max_clients);
+	assert(ret != -1);
+
 	struct compositor *compositor = compositor_create();
 	assert(compositor);
+	assert(compositor->nplanes >= opts.max_clients);
 
-	struct dumb_fb layer0;
-	dumb_fb_init(&layer0, compositor->fd, DRM_FORMAT_ARGB8888,
-			compositor->mode->hdisplay, compositor->mode->vdisplay);
-	dumb_fb_fill(&layer0, compositor->fd, 0xFFFFFFFF);
-	compositor->planes[0].fb = layer0.fb_id;
-	compositor_plane_enable(compositor, 0);
-
-	struct dumb_fb layer1;
-	dumb_fb_init(&layer1, compositor->fd, DRM_FORMAT_ARGB8888,
-			compositor->mode->hdisplay, compositor->mode->vdisplay);
-	dumb_fb_fill(&layer1, compositor->fd, 0x00000000);
-	dumb_fb_draw_rect(&layer1, compositor->fd, 0x7FFF0000, 100, 100, 250, 300);
-	compositor->planes[1].fb = layer1.fb_id;
-	compositor->planes[1].zpos = 1;
-	compositor_plane_enable(compositor, 1);
-
-	struct dumb_fb layer2;
-	dumb_fb_init(&layer2, compositor->fd, DRM_FORMAT_ARGB8888,
-			compositor->mode->hdisplay, compositor->mode->vdisplay);
-	dumb_fb_fill(&layer2, compositor->fd, 0x00000000);
-	dumb_fb_draw_rect(&layer2, compositor->fd, 0x7F00FF00, 175, 200, 250, 300);
-	compositor->planes[2].fb = layer2.fb_id;
-	compositor->planes[2].zpos = 2;
-	compositor_plane_enable(compositor, 2);
-
-	int i = 0;
 	compositor_draw(compositor, true);
 	while (true) {
-		if (i % 50 == 0) {
-			int temp = compositor->planes[1].zpos;
-			compositor->planes[1].zpos = compositor->planes[2].zpos;
-			compositor->planes[2].zpos = temp;
+		ret = protocol_server_poll(&server);
+		assert(ret != -1);
+
+		for (int i = 0; i < opts.max_clients; i++) {
+			if (server.clients[i].connected) {
+				uint32_t plane = opts.client_planes[i];
+				/* no fb received this frame */
+				if (server.clients[i].fb_id == (uint32_t) -1) {
+					compositor_plane_disable(compositor, i);
+					continue;
+				}
+
+				compositor_plane_enable(compositor, plane);
+				compositor->planes[plane].fb = server.clients[i].fb_id;
+				server.clients[i].fb_id = -1;
+			} else {
+				compositor_plane_disable(compositor, i);
+			}
 		}
-		i++;
 
 		compositor_draw(compositor, false);
 	}

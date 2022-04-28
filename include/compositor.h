@@ -26,7 +26,7 @@ struct compositor {
 	uint32_t crtc_index;
 
 	uint32_t enabled_planes;
-	uint32_t nplanes;
+	int nplanes;
 	struct plane planes[COMPOSITOR_MAX_PLANES];
 };
 

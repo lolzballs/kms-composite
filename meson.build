@@ -13,13 +13,16 @@ project(
 
 cc = meson.get_compiler('c')
 
-add_project_arguments(cc.get_supported_arguments([
-	'-Wundef',
-	'-Walloca',
+add_project_arguments(
+	cc.get_supported_arguments([
+		'-Wundef',
+		'-Walloca',
 
-	'-Wno-missing-braces',
-	'-Wno-unused-parameter',
-]), language: 'c')
+		'-Wno-missing-braces',
+		'-Wno-unused-parameter',
+	]),
+	'-D_GNU_SOURCE',
+	language: 'c')
 
 drm = dependency('libdrm', include_type: 'system')
 
@@ -30,6 +33,7 @@ subdir('examples')
 sources = files(
 	'src/compositor.c',
 	'src/main.c',
+	'src/protocol.c',
 	'shared/dumb_fb.c',
 )
 
@@ -37,5 +41,5 @@ executable(
 	'kms-composite',
 	sources,
 	dependencies: [drm],
-	include_directories: include_dirs
+	include_directories: include_dirs,
 )
