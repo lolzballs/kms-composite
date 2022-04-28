@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <libmpc-client.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,20 +36,6 @@ static int open_drm_device() {
 	return fd;
 }
 
-static int open_socket(uint32_t client_id) {
-	int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
-	struct sockaddr_un my_addr = {
-		.sun_family = AF_UNIX,
-		.sun_path = "/home/pi/mpc.sock",
-	};
-	assert(connect(fd, (struct sockaddr*) &my_addr, sizeof(my_addr)) >= 0);
-
-	assert(write(fd, &client_id, sizeof(uint32_t)) != -1);
-
-	return fd;
-}
-
-
 int main(int argc, char *argv[]) {
 	if (argc != 7) {
 		fprintf(stderr, "usage: %s <color> <x> <y> <width> <height> "
@@ -61,8 +48,9 @@ int main(int argc, char *argv[]) {
 	assert(drm_fd != -1);
 
 	uint32_t client_id = strtoul(argv[6], NULL, 10);
-	int compositor_fd = open_socket(client_id);
-	assert(compositor_fd != -1);
+	struct mpc_display *display = mpc_display_connect("/home/pi/mpc.sock",
+			client_id);
+	assert(display != NULL);
 
 	uint32_t color = strtoul(argv[1], NULL, 16);
 
@@ -74,6 +62,7 @@ int main(int argc, char *argv[]) {
 			atol(argv[4]), atol(argv[5]));
 
 	while (true) {
-		assert(write(compositor_fd, &fb.fb_id, sizeof(uint32_t)) == 4);
+		assert(mpc_display_set_framebuffer(display, fb.fb_id) != -1);
+		assert(mpc_display_wait_sync(display) != -1);
 	}
 }
