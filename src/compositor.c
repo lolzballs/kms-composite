@@ -277,8 +277,7 @@ void compositor_draw(struct compositor *compositor, bool modeset) {
 	}
 
 	if (drmModeAtomicCommit(compositor->fd, req, flags, NULL) < 0) {
-		fprintf(stderr, "drmModeAtomicCommit failed\n");
-		assert(0);
+		fprintf(stderr, "warning: drmModeAtomicCommit failed\n");
 	}
 
 	drmModeAtomicFree(req);
